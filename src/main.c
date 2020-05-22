@@ -23,7 +23,17 @@
 #define mainGENERIC_PRIORITY (tskIDLE_PRIORITY)
 #define mainGENERIC_STACK_SIZE ((unsigned short)2560)
 
+#define STATE_ONE 0
+#define STATE_TWO 1
+
+#define STARTING_STATE STATE_ONE
+#define STATE_DEBOUNCE_DELAY 300
+
+static QueueHandle_t StateQueue = NULL;
+
 static TaskHandle_t DemoTask = NULL;
+
+static TaskHandle_t StateMachine = NULL;
 
 // define a handle named buttons_buffer_t. It contains the SCANCODE and Semaphore Lock  
 typedef struct buttons_buffer {
@@ -138,7 +148,7 @@ void PressingCounter(int *count_A, int *count_B, int *count_C, int *count_D){
     
 }
 
-void vDemoTask(void *pvParameters)
+void vDemoTask1(void *pvParameters)
 {
     // structure to store time retrieved from Linux kernel
     static struct timespec the_time;
@@ -261,6 +271,65 @@ void vDemoTask(void *pvParameters)
     }
 }
 
+void vDemoTask2(){
+
+
+}
+
+void basicSequentialStateMachine(void *pvParameters)
+{
+    unsigned char current_state = STARTING_STATE; // Default state
+    unsigned char state_changed = 1; // Only re-evaluate state if it has changed
+    unsigned char input = 0;
+
+    const int state_change_period = STATE_DEBOUNCE_DELAY;
+
+    TickType_t last_change = xTaskGetTickCount();
+
+    while (1) {
+
+        if (state_changed) {
+            goto initial_state;
+        }
+
+        // Handle state machine input
+        if (StateQueue)
+            if (xQueueReceive(StateQueue, &input, portMAX_DELAY) ==
+                pdTRUE)
+                if (xTaskGetTickCount() - last_change >
+                    state_change_period) {
+                    changeState(&current_state, input);
+                    state_changed = 1;
+                    last_change = xTaskGetTickCount();
+                }
+
+initial_state:
+        // Handle current state
+        if (state_changed) {
+            switch (current_state) {
+                case STATE_ONE:
+                    if (vDemoTask2) {
+                        vTaskSuspend(vDemoTask2);
+                    }
+                    if (vDemoTask1) {
+                        vTaskResume(vDemoTask1);
+                    }
+                    break;
+                case STATE_TWO:
+                    if (vDemoTask1) {
+                        vTaskSuspend(vDemoTask1);
+                    }
+                    if (vDemoTask2) {
+                        vTaskResume(vDemoTask2);
+                    }
+                    break;
+                default:
+                    break;
+            }
+            state_changed = 0;
+        }
+    }
+}
 int main(int argc, char *argv[])
 {
     char *bin_folder_path = tumUtilGetBinFolderPath(argv[0]);
@@ -289,10 +358,20 @@ int main(int argc, char *argv[])
         goto err_buttons_lock;
     }
 
-    if (xTaskCreate(vDemoTask, "DemoTask", mainGENERIC_STACK_SIZE * 2, NULL,
-                    mainGENERIC_PRIORITY, &DemoTask) != pdPASS) {
-        goto err_demotask;
+    StateQueue = xQueueCreate(STATE_QUEUE_LENGTH, sizeof(unsigned char));
+    if (!StateQueue) {
+        PRINT_ERROR("Could not open state queue");
+        goto err_state_queue;
     }
+
+    if (xTaskCreate(basicSequentialStateMachine, "StateMachine",
+                    mainGENERIC_STACK_SIZE * 2, NULL,
+                    configMAX_PRIORITIES - 1, StateMachine) != pdPASS) {
+        PRINT_TASK_ERROR("StateMachine");
+        goto err_statemachine;
+    }
+
+
 
     vTaskStartScheduler();
 
