@@ -377,6 +377,10 @@ int main(int argc, char *argv[])
 
     return EXIT_SUCCESS;
 
+err_statemachine:
+    vQueueDelete(StateQueue);
+err_state_queue:
+    vSemaphoreDelete(StateQueue);
 err_demotask:
     vSemaphoreDelete(buttons.lock);
 err_buttons_lock:
