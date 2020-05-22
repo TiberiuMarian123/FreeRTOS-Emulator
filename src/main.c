@@ -23,6 +23,8 @@
 #define mainGENERIC_PRIORITY (tskIDLE_PRIORITY)
 #define mainGENERIC_STACK_SIZE ((unsigned short)2560)
 
+#define STATE_QUEUE_LENGTH 1
+
 #define STATE_ONE 0
 #define STATE_TWO 1
 
