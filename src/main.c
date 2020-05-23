@@ -24,9 +24,13 @@
 #define mainGENERIC_STACK_SIZE ((unsigned short)2560)
 
 #define STATE_QUEUE_LENGTH 1
+#define STATE_COUNT 2
 
 #define STATE_ONE 0
 #define STATE_TWO 1
+
+#define NEXT_TASK 0
+#define PREV_TASK 1
 
 #define STARTING_STATE STATE_ONE
 #define STATE_DEBOUNCE_DELAY 300
@@ -278,6 +282,30 @@ void vDemoTask2(){
 
 }
 
+void changeState(volatile unsigned char *state, unsigned char forwards)
+{
+    switch (forwards) {
+        case NEXT_TASK:
+            if (*state == STATE_COUNT - 1) {
+                *state = 0;
+            }
+            else {
+                (*state)++;
+            }
+            break;
+        case PREV_TASK:
+            if (*state == 0) {
+                *state = STATE_COUNT - 1;
+            }
+            else {
+                (*state)--;
+            }
+            break;
+        default:
+            break;
+    }
+}
+
 void basicSequentialStateMachine(void *pvParameters)
 {
     unsigned char current_state = STARTING_STATE; // Default state
@@ -332,6 +360,8 @@ initial_state:
         }
     }
 }
+
+#define PRINT_TASK_ERROR(task) PRINT_ERROR("Failed to print task ##task");
 int main(int argc, char *argv[])
 {
     char *bin_folder_path = tumUtilGetBinFolderPath(argv[0]);
