@@ -37,9 +37,13 @@
 
 static QueueHandle_t StateQueue = NULL;
 
-static TaskHandle_t DemoTask = NULL;
-
+static TaskHandle_t DemoTask1 = NULL;
+static TaskHandle_t DemoTask2 = NULL;
 static TaskHandle_t StateMachine = NULL;
+static TaskHandle_t BufferSwap = NULL;
+
+static SemaphoreHandle_t ScreenLock = NULL;
+static SemaphoreHandle_t DrawSignal = NULL;
 
 // define a handle named buttons_buffer_t. It contains the SCANCODE and Semaphore Lock  
 typedef struct buttons_buffer {
@@ -116,7 +120,7 @@ void UpdatePositionFigure(signed short x_mouse, signed short y_mouse){
 // If the current state is different from the last state, then increment counter
 // Otherwise do nothing till a new current state comes
 
-static unsigned char lastbuttonState[SDL_NUM_SCANCODES];
+/*static unsigned char lastbuttonState[SDL_NUM_SCANCODES];
 void PressingCounter(int *count_A, int *count_B, int *count_C, int *count_D){
 
     if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
@@ -152,7 +156,7 @@ void PressingCounter(int *count_A, int *count_B, int *count_C, int *count_D){
             *count_D = 0;
         }  
     
-}
+}*/
 
 void vDemoTask1(void *pvParameters)
 {
@@ -164,8 +168,8 @@ void vDemoTask1(void *pvParameters)
     static int random_strings_width = 0;
     static char mouse_string[100];
     static int mouse_strings_width = 0;
-    static char press_string[100];
-    static int press_strings_width = 0;
+    //static char press_string[100];
+    //static int press_strings_width = 0;
 
     static int i = 0;
     static int counter = 0;
@@ -173,10 +177,10 @@ void vDemoTask1(void *pvParameters)
     static signed short x_mouse;
     static signed short y_mouse; 
 
-    int count_A = 0;
+    /*int count_A = 0;
     int count_B = 0;
     int count_C = 0;
-    int count_D = 0;
+    int count_D = 0;*/
 
 
 
@@ -256,20 +260,20 @@ void vDemoTask1(void *pvParameters)
         if(i == 0) // if we are back where we started
             counter = 0;
 
-        PressingCounter(&count_A, &count_B, &count_C, &count_D);
+        /*PressingCounter(&count_A, &count_B, &count_C, &count_D);
 
         sprintf(press_string,
                 "A:  %d, B:  %d, C:  %d, D:  %d",
-               count_A, count_B, count_C, count_D);
+               count_A, count_B, count_C, count_D);*/
 
-        if (!tumGetTextSize((char *)press_string,
+        /*if (!tumGetTextSize((char *)press_string,
                             &press_strings_width, NULL)){  
 
             tumDrawText(press_string,
                         SCREEN_WIDTH /5  - random_strings_width / 2 - 20 + x_mouse/5, // moving horizontally by 'i' pixels
                         SCREEN_HEIGHT * 1/9 - DEFAULT_FONT_SIZE / 2 + y_mouse/5,
                         Red);  	
-            }
+            }*/
        
         tumDrawUpdateScreen(); // Refresh the screen to draw string
 
