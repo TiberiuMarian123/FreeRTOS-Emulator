@@ -282,6 +282,23 @@ void vDemoTask2(){
 
 }
 
+static int vCheckStateInput(void)
+{
+    if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
+        if (buttons.buttons[KEYCODE(C)]) {
+            buttons.buttons[KEYCODE(C)] = 0;
+            if (StateQueue) {
+                xSemaphoreGive(buttons.lock);
+                xQueueSend(StateQueue, &next_state_signal, 0);
+                return -1;
+            }
+        }
+        xSemaphoreGive(buttons.lock);
+    }
+
+    return 0;
+}
+
 void changeState(volatile unsigned char *state, unsigned char forwards)
 {
     switch (forwards) {
@@ -361,6 +378,26 @@ initial_state:
     }
 }
 
+void vSwapBuffers(void *pvParameters)
+{
+    TickType_t xLastWakeTime;
+    xLastWakeTime = xTaskGetTickCount();
+    const TickType_t frameratePeriod = 20;
+
+    tumDrawBindThread(); // Setup Rendering handle with correct GL context
+
+    while (1) {
+        if (xSemaphoreTake(ScreenLock, portMAX_DELAY) == pdTRUE) {
+            tumDrawUpdateScreen();
+            tumEventFetchEvents();
+            xSemaphoreGive(ScreenLock);
+            xSemaphoreGive(DrawSignal);
+            vTaskDelayUntil(&xLastWakeTime,
+                            pdMS_TO_TICKS(frameratePeriod));
+        }
+    }
+}
+
 #define PRINT_TASK_ERROR(task) PRINT_ERROR("Failed to print task ##task");
 int main(int argc, char *argv[])
 {
@@ -383,11 +420,18 @@ int main(int argc, char *argv[])
         goto err_init_audio;
     }
 
+    atexit(aIODeinit);
 
     buttons.lock = xSemaphoreCreateMutex(); // Enable the locking mechanism
     if (!buttons.lock) {  // if lock is used by sth. else
         PRINT_ERROR("Failed to create buttons lock");
         goto err_buttons_lock;
+    }
+
+    ScreenLock = xSemaphoreCreateMutex();
+    if (!ScreenLock) {
+        PRINT_ERROR("Failed to create screen lock");
+        goto err_screen_lock;
     }
 
     StateQueue = xQueueCreate(STATE_QUEUE_LENGTH, sizeof(unsigned char));
@@ -403,7 +447,19 @@ int main(int argc, char *argv[])
         goto err_statemachine;
     }
 
+    if (xTaskCreate(vDemoTask1, "DemoTask1", mainGENERIC_STACK_SIZE * 2,
+                    NULL, mainGENERIC_PRIORITY, &DemoTask1) != pdPASS) {
+        PRINT_TASK_ERROR("DemoTask1");
+        goto err_demotask1;
+    }
+    if (xTaskCreate(vDemoTask2, "DemoTask2", mainGENERIC_STACK_SIZE * 2,
+                    NULL, mainGENERIC_PRIORITY, &DemoTask2) != pdPASS) {
+        PRINT_TASK_ERROR("DemoTask2");
+        goto err_demotask2;
+    }
 
+    vTaskSuspend(DemoTask1);
+    vTaskSuspend(DemoTask2);    
 
     vTaskStartScheduler();
 
@@ -413,8 +469,12 @@ err_statemachine:
     vQueueDelete(StateQueue);
 err_state_queue:
     vSemaphoreDelete(StateQueue);
-err_demotask:
-    vSemaphoreDelete(buttons.lock);
+err_demotask2:
+    vTaskDelete(DemoTask1);
+err_demotask1:
+    vTaskDelete(BufferSwap);
+err_screen_lock:
+    vSemaphoreDelete(DrawSignal);
 err_buttons_lock:
     tumSoundExit();
 err_init_audio:
