@@ -42,6 +42,9 @@ static TaskHandle_t DemoTask2 = NULL;
 static TaskHandle_t StateMachine = NULL;
 static TaskHandle_t BufferSwap = NULL;
 
+const unsigned char next_state_signal = NEXT_TASK;
+const unsigned char prev_state_signal = PREV_TASK;
+
 static SemaphoreHandle_t ScreenLock = NULL;
 static SemaphoreHandle_t DrawSignal = NULL;
 
@@ -282,7 +285,27 @@ void vDemoTask1(void *pvParameters)
 }
 
 void vDemoTask2(){
+    
+tumDrawBindThread();
 
+    while (1) {
+
+        tumEventFetchEvents(); // Query events backend for new events, ie. button presses
+        xGetButtonInput();
+
+        if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
+            if (buttons.buttons[KEYCODE(Q)]) { // If button Q is pressed
+                exit(EXIT_SUCCESS); // File buffers are flushed, streams are closed, and temporary files are deleted.
+            }
+            xSemaphoreGive(buttons.lock);
+        }
+
+        tumDrawClear(White); // Clear screen
+
+        tumDrawUpdateScreen(); // Refresh the screen to draw string
+
+        vTaskDelay((TickType_t)20);
+    }
 
 }
 
