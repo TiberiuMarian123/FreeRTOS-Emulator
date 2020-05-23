@@ -54,6 +54,7 @@
 #include "tracer.h"
 #endif
 
+// mq = Message Queues (not important for the project)
 static char *mq_one_name = "FreeRTOS_MQ_one_22";
 static char *mq_two_name = "FreeRTOS_MQ_two_22";
 aIO_handle_t mq_one = NULL;
@@ -65,7 +66,7 @@ aIO_handle_t tcp_soc = NULL;
 const unsigned char next_state_signal = NEXT_TASK;
 const unsigned char prev_state_signal = PREV_TASK;
 
-static TaskHandle_t StateMachine = NULL;
+static TaskHandle_t StateMachine = NULL; // it never stops
 static TaskHandle_t BufferSwap = NULL;
 static TaskHandle_t DemoTask1 = NULL;
 static TaskHandle_t DemoTask2 = NULL;
@@ -80,6 +81,11 @@ static SemaphoreHandle_t ScreenLock = NULL;
 
 static image_handle_t logo_image = NULL;
 
+// Nowadays = multi-threaded computers
+// NO GLOBAL VARIABLES !!!!!
+// Unless they have a lock (mutex)!!
+// -1 point pro global variable
+
 typedef struct buttons_buffer {
     unsigned char buttons[SDL_NUM_SCANCODES];
     SemaphoreHandle_t lock;
@@ -87,6 +93,8 @@ typedef struct buttons_buffer {
 
 static buttons_buffer_t buttons = { 0 };
 
+// to check for errors in the TUM Backend library
+// not always necessary
 void checkDraw(unsigned char status, const char *msg)
 {
     if (status) {
@@ -127,13 +135,17 @@ void changeState(volatile unsigned char *state, unsigned char forwards)
 }
 
 /*
- * Example basic state machine with sequential states
+ * // run, enter, exit function
+ * // uses function pointers
+ * // uses the ready, running, suspend, block from FreeRTOS
+ * // sequential = can't jump between states
+ * // just stopping and starting tasks
+ * // LOOK AT THE CODE SNIPPETS
  */
 void basicSequentialStateMachine(void *pvParameters)
 {
     unsigned char current_state = STARTING_STATE; // Default state
-    unsigned char state_changed =
-        1; // Only re-evaluate state if it has changed
+    unsigned char state_changed = 1; // Only re-evaluate state if it has changed
     unsigned char input = 0;
 
     const int state_change_period = STATE_DEBOUNCE_DELAY;
@@ -146,6 +158,8 @@ void basicSequentialStateMachine(void *pvParameters)
         }
 
         // Handle state machine input
+        // state machine reads the queue
+        // state machine block the queue until a state changes
         if (StateQueue)
             if (xQueueReceive(StateQueue, &input, portMAX_DELAY) ==
                 pdTRUE)
@@ -160,7 +174,7 @@ initial_state:
         // Handle current state
         if (state_changed) {
             switch (current_state) {
-                case STATE_ONE:
+                case STATE_ONE: 
                     if (DemoTask2) {
                         vTaskSuspend(DemoTask2);
                     }
@@ -373,6 +387,7 @@ void vDrawButtonText(void)
     }
 }
 
+// 
 static int vCheckStateInput(void)
 {
     if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
@@ -662,6 +677,8 @@ int main(int argc, char *argv[])
 
     logo_image = tumDrawLoadImage(LOGO_FILENAME);
 
+    // part of C standard library
+    // clears the queues after exiting the programm
     atexit(aIODeinit);
 
     //Load a second font for fun
@@ -673,11 +690,18 @@ int main(int argc, char *argv[])
         goto err_buttons_lock;
     }
 
+    // used by frame swapping task
+    // for sync of the drawings
+    // it needs a Semaphore
     DrawSignal = xSemaphoreCreateBinary(); // Screen buffer locking
     if (!DrawSignal) {
         PRINT_ERROR("Failed to create draw signal");
         goto err_draw_signal;
     }
+
+    // guard against drawing to the screen
+    // screen = also a resource
+    // it neeeds a mutex
     ScreenLock = xSemaphoreCreateMutex();
     if (!ScreenLock) {
         PRINT_ERROR("Failed to create screen lock");
@@ -685,18 +709,29 @@ int main(int argc, char *argv[])
     }
 
     // Message sending
+    // STATE_QUEUE_LENGTH = #define 
+    // Queue used to send bytes (size = 1 byte)
     StateQueue = xQueueCreate(STATE_QUEUE_LENGTH, sizeof(unsigned char));
     if (!StateQueue) {
         PRINT_ERROR("Could not open state queue");
         goto err_state_queue;
     }
 
+    // Config max Priorities to set the priority of the task
+    // State machine = very important
+    // Handling the transition between different states
+    // configMAX_PRIORITIES - 1
     if (xTaskCreate(basicSequentialStateMachine, "StateMachine",
                     mainGENERIC_STACK_SIZE * 2, NULL,
                     configMAX_PRIORITIES - 1, StateMachine) != pdPASS) {
         PRINT_TASK_ERROR("StateMachine");
         goto err_statemachine;
     }
+
+    // try to maintain a certain fps
+    // keeping drawing to the frame => very important too
+    // Maintaining certain FPS = more important than drawing the entire screen
+    // configMAX_PRIORITIES == 0
     if (xTaskCreate(vSwapBuffers, "BufferSwapTask",
                     mainGENERIC_STACK_SIZE * 2, NULL, configMAX_PRIORITIES,
                     BufferSwap) != pdPASS) {
@@ -704,7 +739,11 @@ int main(int argc, char *argv[])
         goto err_bufferswap;
     }
 
+
     /** Demo Tasks */
+    // 2 tasks which are drawing on the screen
+    // the least important,
+    // mainGENERIC_PRIORITY
     if (xTaskCreate(vDemoTask1, "DemoTask1", mainGENERIC_STACK_SIZE * 2,
                     NULL, mainGENERIC_PRIORITY, &DemoTask1) != pdPASS) {
         PRINT_TASK_ERROR("DemoTask1");
@@ -717,6 +756,7 @@ int main(int argc, char *argv[])
     }
 
     /** SOCKETS */
+
     xTaskCreate(vUDPDemoTask, "UDPTask", mainGENERIC_STACK_SIZE * 2, NULL,
                 configMAX_PRIORITIES - 1, &UDPDemoTask);
     xTaskCreate(vTCPDemoTask, "TCPTask", mainGENERIC_STACK_SIZE, NULL,
@@ -728,6 +768,12 @@ int main(int argc, char *argv[])
     xTaskCreate(vDemoSendTask, "SendTask", mainGENERIC_STACK_SIZE * 2, NULL,
                 configMAX_PRIORITIES - 1, &DemoSendTask);
 
+    // Suspending both tasks
+    // Tasks are created in the READY STATE
+    // The work of the scheduler = to block tasks
+    // User must SUSPEND them manually
+    // I want my state machine to decide which runs =>
+    // first suspend the tasks
     vTaskSuspend(DemoTask1);
     vTaskSuspend(DemoTask2);
 
