@@ -35,6 +35,8 @@
 #define STARTING_STATE STATE_ONE
 #define STATE_DEBOUNCE_DELAY 300
 
+#define KEYCODE(CHAR) SDL_SCANCODE_##CHAR
+
 static QueueHandle_t StateQueue = NULL;
 
 static TaskHandle_t DemoTask1 = NULL;
@@ -56,6 +58,103 @@ typedef struct buttons_buffer {
 
 static buttons_buffer_t buttons = { 0 };
 
+void changeState(volatile unsigned char *state, unsigned char forwards)
+{
+    switch (forwards) {
+        case NEXT_TASK:
+            if (*state == STATE_COUNT - 1) {
+                *state = 0;
+            }
+            else {
+                (*state)++;
+            }
+            break;
+        case PREV_TASK:
+            if (*state == 0) {
+                *state = STATE_COUNT - 1;
+            }
+            else {
+                (*state)--;
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+void basicSequentialStateMachine(void *pvParameters)
+{
+    unsigned char current_state = STARTING_STATE; // Default state
+    unsigned char state_changed = 1; // Only re-evaluate state if it has changed
+    unsigned char input = 0;
+
+    const int state_change_period = STATE_DEBOUNCE_DELAY;
+
+    TickType_t last_change = xTaskGetTickCount();
+
+    while (1) {
+
+        if (state_changed) {
+            goto initial_state;
+        }
+
+        // Handle state machine input
+        if (StateQueue)
+            if (xQueueReceive(StateQueue, &input, portMAX_DELAY) == pdTRUE)
+                if (xTaskGetTickCount() - last_change > state_change_period) {
+                    changeState(&current_state, input);
+                    state_changed = 1;
+                    last_change = xTaskGetTickCount();
+                }
+
+initial_state:
+        // Handle current state
+        if (state_changed) {
+            switch (current_state) {
+                case STATE_ONE:
+                    if (DemoTask2) {
+                        vTaskSuspend(DemoTask2);
+                    }
+                    if (DemoTask1) {
+                        vTaskResume(DemoTask1);
+                    }
+                    break;
+                case STATE_TWO:
+                    if (DemoTask1) {
+                        vTaskSuspend(DemoTask1);
+                    }
+                    if (DemoTask2) {
+                        vTaskResume(DemoTask2);
+                    }
+                    break;
+                default:
+                    break;
+            }
+            state_changed = 0;
+        }
+    }
+}
+
+void vSwapBuffers(void *pvParameters)
+{
+    TickType_t xLastWakeTime;
+    xLastWakeTime = xTaskGetTickCount();
+    const TickType_t frameratePeriod = 20;
+
+    tumDrawBindThread(); // Setup Rendering handle with correct GL context
+
+    while (1) {
+        if (xSemaphoreTake(ScreenLock, portMAX_DELAY) == pdTRUE) {
+            tumDrawUpdateScreen();
+            tumEventFetchEvents();
+            xSemaphoreGive(ScreenLock);
+            xSemaphoreGive(DrawSignal);
+            vTaskDelayUntil(&xLastWakeTime,
+                            pdMS_TO_TICKS(frameratePeriod));
+        }
+    }
+}
+
 void xGetButtonInput(void)
 {   // if the semaphore is not used (lock == 0), then take it and use it to input button.
     if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
@@ -64,9 +163,25 @@ void xGetButtonInput(void)
     }
 }
 
+static int vCheckStateInput(void)
+{
+    if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
+        if (buttons.buttons[KEYCODE(C)]) {
+            buttons.buttons[KEYCODE(C)] = 0;
+            if (StateQueue) {
+                xSemaphoreGive(buttons.lock);
+                xQueueSend(StateQueue, &next_state_signal, 0);
+                return -1;
+            }
+        }
+        xSemaphoreGive(buttons.lock);
+    }
+
+    return 0;
+}
+
 // just a more intuitive format 
 #define KEYCODE(CHAR) SDL_SCANCODE_##CHAR
-
 
 void vDrawTriangle(signed short x_mouse, signed short y_mouse){
 
@@ -161,6 +276,7 @@ void PressingCounter(int *count_A, int *count_B, int *count_C, int *count_D){
     
 }*/
 
+
 void vDemoTask1(void *pvParameters)
 {
     // structure to store time retrieved from Linux kernel
@@ -197,6 +313,8 @@ void vDemoTask1(void *pvParameters)
 
         tumEventFetchEvents(); // Query events backend for new events, ie. button presses
         xGetButtonInput(); // Update global input
+
+        xSemaphoreTake(ScreenLock, portMAX_DELAY);
 
         // `buttons` is a global shared variable and as such needs to be
         // guarded with a mutex, mutex must be obtained before accessing the
@@ -280,149 +398,46 @@ void vDemoTask1(void *pvParameters)
        
         tumDrawUpdateScreen(); // Refresh the screen to draw string
 
+        xSemaphoreGive(ScreenLock);
+
         vTaskDelay((TickType_t)20);
     }
 }
 
 void vDemoTask2(){
-    
 tumDrawBindThread();
 
     while (1) {
 
-        tumEventFetchEvents(); // Query events backend for new events, ie. button presses
-        xGetButtonInput();
+        if (DrawSignal)
+            if (xSemaphoreTake(DrawSignal, portMAX_DELAY) ==
+                pdTRUE) {
 
-        if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
-            if (buttons.buttons[KEYCODE(Q)]) { // If button Q is pressed
-                exit(EXIT_SUCCESS); // File buffers are flushed, streams are closed, and temporary files are deleted.
-            }
-            xSemaphoreGive(buttons.lock);
-        }
+                xGetButtonInput(); // Update global input
 
-        tumDrawClear(White); // Clear screen
+                xSemaphoreTake(ScreenLock, portMAX_DELAY);
 
-        tumDrawUpdateScreen(); // Refresh the screen to draw string
+                tumEventFetchEvents(); // Query events backend for new events, ie. button presses
 
-        vTaskDelay((TickType_t)20);
-    }
-
-}
-
-static int vCheckStateInput(void)
-{
-    if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
-        if (buttons.buttons[KEYCODE(C)]) {
-            buttons.buttons[KEYCODE(C)] = 0;
-            if (StateQueue) {
-                xSemaphoreGive(buttons.lock);
-                xQueueSend(StateQueue, &next_state_signal, 0);
-                return -1;
-            }
-        }
-        xSemaphoreGive(buttons.lock);
-    }
-
-    return 0;
-}
-
-void changeState(volatile unsigned char *state, unsigned char forwards)
-{
-    switch (forwards) {
-        case NEXT_TASK:
-            if (*state == STATE_COUNT - 1) {
-                *state = 0;
-            }
-            else {
-                (*state)++;
-            }
-            break;
-        case PREV_TASK:
-            if (*state == 0) {
-                *state = STATE_COUNT - 1;
-            }
-            else {
-                (*state)--;
-            }
-            break;
-        default:
-            break;
-    }
-}
-
-void basicSequentialStateMachine(void *pvParameters)
-{
-    unsigned char current_state = STARTING_STATE; // Default state
-    unsigned char state_changed = 1; // Only re-evaluate state if it has changed
-    unsigned char input = 0;
-
-    const int state_change_period = STATE_DEBOUNCE_DELAY;
-
-    TickType_t last_change = xTaskGetTickCount();
-
-    while (1) {
-
-        if (state_changed) {
-            goto initial_state;
-        }
-
-        // Handle state machine input
-        if (StateQueue)
-            if (xQueueReceive(StateQueue, &input, portMAX_DELAY) ==
-                pdTRUE)
-                if (xTaskGetTickCount() - last_change >
-                    state_change_period) {
-                    changeState(&current_state, input);
-                    state_changed = 1;
-                    last_change = xTaskGetTickCount();
+                if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
+                    if (buttons.buttons[KEYCODE(Q)]) { // If button Q is pressed
+                        exit(EXIT_SUCCESS); // File buffers are flushed, streams are closed, and temporary files are deleted.
+                    }
+                    xSemaphoreGive(buttons.lock);
                 }
 
-initial_state:
-        // Handle current state
-        if (state_changed) {
-            switch (current_state) {
-                case STATE_ONE:
-                    if (vDemoTask2) {
-                        vTaskSuspend(vDemoTask2);
-                    }
-                    if (vDemoTask1) {
-                        vTaskResume(vDemoTask1);
-                    }
-                    break;
-                case STATE_TWO:
-                    if (vDemoTask1) {
-                        vTaskSuspend(vDemoTask1);
-                    }
-                    if (vDemoTask2) {
-                        vTaskResume(vDemoTask2);
-                    }
-                    break;
-                default:
-                    break;
+                tumDrawClear(White); // Clear screen
+
+                tumDrawUpdateScreen(); // Refresh the screen to draw string
+
+                xSemaphoreGive(ScreenLock);
+
+                vCheckStateInput();
+
+                vTaskDelay((TickType_t)20);
             }
-            state_changed = 0;
-        }
     }
-}
 
-void vSwapBuffers(void *pvParameters)
-{
-    TickType_t xLastWakeTime;
-    xLastWakeTime = xTaskGetTickCount();
-    const TickType_t frameratePeriod = 20;
-
-    tumDrawBindThread(); // Setup Rendering handle with correct GL context
-
-    while (1) {
-        if (xSemaphoreTake(ScreenLock, portMAX_DELAY) == pdTRUE) {
-            tumDrawUpdateScreen();
-            tumEventFetchEvents();
-            xSemaphoreGive(ScreenLock);
-            xSemaphoreGive(DrawSignal);
-            vTaskDelayUntil(&xLastWakeTime,
-                            pdMS_TO_TICKS(frameratePeriod));
-        }
-    }
 }
 
 #define PRINT_TASK_ERROR(task) PRINT_ERROR("Failed to print task ##task");
