@@ -387,7 +387,10 @@ void vDrawButtonText(void)
     }
 }
 
-// 
+// all its doing is to look if the C button is pressed
+// return -1 => queue sent
+// return 0 => queue not sent
+
 static int vCheckStateInput(void)
 {
     if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
@@ -594,7 +597,7 @@ void vDemoTask2(void *pvParameters)
 
                 vDrawStaticItems();
 
-                // Draw the walls
+                // Draw the walls and check if they successfully drew
                 checkDraw(tumDrawFilledBox(
                               left_wall->x1, left_wall->y1,
                               left_wall->w, left_wall->h,
@@ -756,7 +759,7 @@ int main(int argc, char *argv[])
     }
 
     /** SOCKETS */
-
+    // using embedded hardware => send-receive between components => SOCKETS
     xTaskCreate(vUDPDemoTask, "UDPTask", mainGENERIC_STACK_SIZE * 2, NULL,
                 configMAX_PRIORITIES - 1, &UDPDemoTask);
     xTaskCreate(vTCPDemoTask, "TCPTask", mainGENERIC_STACK_SIZE, NULL,
