@@ -10,6 +10,7 @@
 #include "queue.h"
 #include "semphr.h"
 #include "task.h"
+#include "timers.h"
 
 #include "TUM_Ball.h"
 #include "TUM_Draw.h"
@@ -52,6 +53,8 @@ static TaskHandle_t DemoTask3 = NULL;
 static TaskHandle_t StateMachine = NULL;
 static TaskHandle_t BufferSwap = NULL;
 
+TimerHandle_t xTime; // create timer
+
 const unsigned char next_state_signal = NEXT_TASK;
 const unsigned char prev_state_signal = PREV_TASK;
 
@@ -65,6 +68,20 @@ typedef struct buttons_buffer {
 } buttons_buffer_t;
 
 static buttons_buffer_t buttons = { 0 };
+
+/*void vTimerCallback( TimerHandle_t xTimer ){
+
+
+}
+
+void CreateTimer(void){
+
+    xTime = xTimerCreate( "Timer",
+                            1, // 1 tick period
+                            pdTRUE,
+                            ( void * ) 0, // # times the timer expired
+                            vTimerCallback );// what to do when timer expires
+}*/
 
 void changeState(volatile unsigned char *state, unsigned char forwards)
 {
@@ -276,49 +293,49 @@ void UpdatePositionFigure(signed short x_mouse, signed short y_mouse){
     angle = angle + 0.1;
 }
 
-// It does work WITHOUT DEBOUNCING. 
-// I tried to store the previous status (button press) in lastbuttonState
-// Then I compared the lastbuttonState with the current state.
-// If the current state is different from the last state, then increment counter
-// Otherwise do nothing till a new current state comes
 
-/*static unsigned char lastbuttonState[SDL_NUM_SCANCODES];
-void PressingCounter(int *count_A, int *count_B, int *count_C, int *count_D){
+// It works if you don't press the ONE button consecutively (like A, then A once more) 
 
+void PressingCounter(int *count_A, int *count_B, int *count_C, int *count_D, struct timespec the_time,
+                     unsigned long lastDebounceTime, unsigned long debounceDelay){
+
+    static unsigned char lastbuttonState[SDL_NUM_SCANCODES]; // initially nothing is being pressed                      
     if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
 
-            if (buttons.buttons[KEYCODE(A)] && !strcmp(buttons.buttons[KEYCODE(A)] , lastbuttonState) )
+            if (buttons.buttons[KEYCODE(A)] && (the_time.tv_sec - lastDebounceTime > debounceDelay))
             {
                 (*count_A)++; 
-                memcpy(lastbuttonState , buttons.buttons[KEYCODE(A)], strlen(buttons.buttons[KEYCODE(A)]));
+                memcpy(lastbuttonState,buttons.buttons,SDL_NUM_SCANCODES * sizeof(unsigned char));
+                lastDebounceTime = the_time.tv_sec;
             }
-            if (buttons.buttons[KEYCODE(B)] && !strcmp(buttons.buttons[KEYCODE(B)] , lastbuttonState) )
+            if (buttons.buttons[KEYCODE(B)] && ! lastbuttonState[KEYCODE(B)])
             {
                 (*count_B)++;
-                memcpy(lastbuttonState , buttons.buttons[KEYCODE(B)], strlen(buttons.buttons[KEYCODE(B)]));
+                memcpy(lastbuttonState,buttons.buttons,SDL_NUM_SCANCODES * sizeof(unsigned char));
             }   
-            if (buttons.buttons[KEYCODE(C)] && !strcmp(buttons.buttons[KEYCODE(C)] , lastbuttonState) )
+            if (buttons.buttons[KEYCODE(C)] && ! lastbuttonState[KEYCODE(C)])
             {
-                memcpy(lastbuttonState , buttons.buttons[KEYCODE(C)], strlen(buttons.buttons[KEYCODE(C)]));
+                memcpy(lastbuttonState,buttons.buttons,SDL_NUM_SCANCODES * sizeof(unsigned char));
                 (*count_C)++;
             }
-            if (buttons.buttons[KEYCODE(D)] && !strcmp(buttons.buttons[KEYCODE(D)] , lastbuttonState) )
+            if (buttons.buttons[KEYCODE(D)] && ! lastbuttonState[KEYCODE(D)])
             {
-                memcpy(lastbuttonState , buttons.buttons[KEYCODE(D)], strlen(buttons.buttons[KEYCODE(D)]));
+                memcpy(lastbuttonState,buttons.buttons,SDL_NUM_SCANCODES * sizeof(unsigned char));
                 (*count_D)++;   
             }
+
             xSemaphoreGive(buttons.lock); 
         }
     
     if(tumEventGetMouseLeft()) // if left mouse button is PRESSED
-        {                       // reset the counters
+        {                      // reset the counters
             *count_A = 0;    
             *count_B = 0;
             *count_C = 0;
             *count_D = 0;
         }  
     
-}*/
+}
 
 void vDrawFPS(void)
 {
@@ -379,14 +396,18 @@ void vDemoTask1(void *pvParameters)
 {
     // structure to store time retrieved from Linux kernel
     static struct timespec the_time;
+
     static char our_time_string[100];
     static int our_time_strings_width = 0;
     static char random_string[100];
     static int random_strings_width = 0;
     static char mouse_string[100];
     static int mouse_strings_width = 0;
-    //static char press_string[100];
-    //static int press_strings_width = 0;
+    static char press_string[100];
+    static int press_strings_width = 0;
+
+    static unsigned long lastDebounceTime = 0;
+    static unsigned long debounceDelay = 1; // 1 s delay between buttons
 
     static int i = 0;
     static int counter = 0;
@@ -394,10 +415,10 @@ void vDemoTask1(void *pvParameters)
     static signed short x_mouse;
     static signed short y_mouse; 
 
-    /*int count_A = 0;
+    int count_A = 0;
     int count_B = 0;
     int count_C = 0;
-    int count_D = 0;*/
+    int count_D = 0;
 
 
 
@@ -479,20 +500,18 @@ void vDemoTask1(void *pvParameters)
         if(i == 0) // if we are back where we started
             counter = 0;
 
-        /*PressingCounter(&count_A, &count_B, &count_C, &count_D);
-
+        PressingCounter(&count_A, &count_B, &count_C, &count_D, the_time, lastDebounceTime, debounceDelay);
         sprintf(press_string,
                 "A:  %d, B:  %d, C:  %d, D:  %d",
-               count_A, count_B, count_C, count_D);*/
+               count_A, count_B, count_C, count_D);
 
-        /*if (!tumGetTextSize((char *)press_string,
+        if (!tumGetTextSize((char *)press_string,
                             &press_strings_width, NULL)){  
-
             tumDrawText(press_string,
                         SCREEN_WIDTH /5  - random_strings_width / 2 - 20 + x_mouse/5, // moving horizontally by 'i' pixels
                         SCREEN_HEIGHT * 1/9 - DEFAULT_FONT_SIZE / 2 + y_mouse/5,
                         Red);  	
-            }*/
+            }
 
 
         vDrawHelpText();
@@ -646,17 +665,17 @@ int main(int argc, char *argv[])
 
     // Allocate Statically, priority -2              DOES NOT WORK PROPERLY (But it is very close !!!!!!!!)
     // Set configSUPPORT_STATIC_ALLOCATION to 1
-    if (xTaskCreateStatic(vDemoTask3, "DemoTask3", mainGENERIC_STACK_SIZE * 2,
+    /*if (xTaskCreateStatic(vDemoTask3, "DemoTask3", mainGENERIC_STACK_SIZE * 2,
                     NULL, mainGENERIC_PRIORITY - 2, xStack, &xTaskBuffer) != pdPASS) {
         PRINT_TASK_ERROR("DemoTask3");
         goto err_demotask3;
-    }
+    }*/
     
-    /*if (xTaskCreate(vDemoTask3, "DemoTask3", mainGENERIC_STACK_SIZE * 2,
-                    NULL, mainGENERIC_PRIORITY - 1, &DemoTask3) != pdPASS) {
+    if (xTaskCreate(vDemoTask3, "DemoTask3", mainGENERIC_STACK_SIZE * 2,
+                    NULL, mainGENERIC_PRIORITY - 2, &DemoTask3) != pdPASS) {
         PRINT_TASK_ERROR("DemoTask3");
         goto err_demotask3;
-    }*/
+    }
 
     vTaskSuspend(DemoTask1);
     vTaskSuspend(DemoTask2); 
@@ -666,26 +685,27 @@ int main(int argc, char *argv[])
 
     return EXIT_SUCCESS;
 
-err_statemachine:
-    vQueueDelete(StateQueue);
-err_state_queue:
-    vSemaphoreDelete(StateQueue);
-err_demotask1:
-    vTaskDelete(BufferSwap);
-err_demotask2:
-    vTaskDelete(DemoTask1);
-err_demotask3:
-    vTaskDelete(DemoTask2);
-err_screen_lock:
-    vSemaphoreDelete(DrawSignal);
-err_buttons_lock:
-    tumSoundExit();
-err_init_audio:
-    tumEventExit();
-err_init_events:
-    tumDrawExit();
-err_init_drawing:
-    return EXIT_FAILURE;
+    err_statemachine:
+        vQueueDelete(StateQueue);
+    err_state_queue:
+        vSemaphoreDelete(StateQueue);
+    err_demotask1:
+        vTaskDelete(BufferSwap);
+    err_demotask2:
+        vTaskDelete(DemoTask1);
+    err_demotask3:
+        vTaskDelete(DemoTask2);
+    err_screen_lock:
+        vSemaphoreDelete(DrawSignal);
+    err_buttons_lock:
+        tumSoundExit();
+    err_init_audio:
+        tumEventExit();
+    err_init_events:
+        tumDrawExit();
+    err_init_drawing:
+        return EXIT_FAILURE;
+
 }
 
 // cppcheck-suppress unusedFunction
