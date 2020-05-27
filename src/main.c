@@ -44,7 +44,7 @@
 
 static QueueHandle_t StateQueue = NULL;
 
-static StackType_t xStack[mainGENERIC_STACK_SIZE * 2];
+static StackType_t xStack[mainGENERIC_STACK_SIZE * 6];
 static StaticTask_t xTaskBuffer;
 
 static TaskHandle_t DemoTask1 = NULL;
@@ -53,7 +53,7 @@ static TaskHandle_t DemoTask3 = NULL;
 static TaskHandle_t StateMachine = NULL;
 static TaskHandle_t BufferSwap = NULL;
 
-TimerHandle_t xTime; // create timer
+TimerHandle_t xTimer = NULL; // create timer
 
 const unsigned char next_state_signal = NEXT_TASK;
 const unsigned char prev_state_signal = PREV_TASK;
@@ -68,20 +68,6 @@ typedef struct buttons_buffer {
 } buttons_buffer_t;
 
 static buttons_buffer_t buttons = { 0 };
-
-/*void vTimerCallback( TimerHandle_t xTimer ){
-
-
-}
-
-void CreateTimer(void){
-
-    xTime = xTimerCreate( "Timer",
-                            1, // 1 tick period
-                            pdTRUE,
-                            ( void * ) 0, // # times the timer expired
-                            vTimerCallback );// what to do when timer expires
-}*/
 
 void changeState(volatile unsigned char *state, unsigned char forwards)
 {
@@ -600,6 +586,57 @@ int counter = 0;
 
 }
 
+void vTimerCallback(TimerHandle_t xTimer) {
+
+	/* Optionally do something if the pxTimer parameter is NULL. */
+	configASSERT(xTimer);
+	
+}
+
+void vDemoTask4(){
+tumDrawBindThread();
+
+    while (1) {
+
+        tumEventFetchEvents(); // Query events backend for new events, ie. button presses
+        xGetButtonInput(); // Update global input
+
+        //xTimerStart(xTimer, 0);
+
+        xSemaphoreTake(ScreenLock, portMAX_DELAY);
+
+        if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
+            if (buttons.buttons[KEYCODE(UP)])  // If ARROW_UP is pressed
+                exit(EXIT_SUCCESS);  // File buffers are flushed, streams are closed, and temporary files are deleted.
+            xSemaphoreGive(buttons.lock);
+        }
+
+    }
+
+}
+
+void vDemoTask5( ){
+tumDrawBindThread();
+
+    while (1) {
+
+        tumEventFetchEvents(); // Query events backend for new events, ie. button presses
+        xGetButtonInput(); // Update global input
+
+        //xTimerStart(xTimer, 0);
+
+        xSemaphoreTake(ScreenLock, portMAX_DELAY);
+
+        if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
+            if (buttons.buttons[KEYCODE(DOWN)])  // If ARROW_DOWN is pressed
+                exit(EXIT_SUCCESS);  // File buffers are flushed, streams are closed, and temporary files are deleted.
+            xSemaphoreGive(buttons.lock);
+        }
+
+    }
+
+}
+
 #define PRINT_TASK_ERROR(task) PRINT_ERROR("Failed to print task ##task");
 int main(int argc, char *argv[])
 {
@@ -649,6 +686,11 @@ int main(int argc, char *argv[])
         goto err_statemachine;
     }
 
+    // Create Timer
+    /*xTimer = xTimerCreate("ResetTimer", 15000 / portTICK_PERIOD_MS, pdTRUE,
+			(void *) 0, vTimerCallback);
+	configASSERT(xTimer != NULL); */
+
     if (xTaskCreate(vDemoTask1, "DemoTask1", mainGENERIC_STACK_SIZE * 2,
                     NULL, mainGENERIC_PRIORITY, &DemoTask1) != pdPASS) {
         PRINT_TASK_ERROR("DemoTask1");
@@ -665,11 +707,8 @@ int main(int argc, char *argv[])
 
     // Allocate Statically, priority -2              DOES NOT WORK PROPERLY (But it is very close !!!!!!!!)
     // Set configSUPPORT_STATIC_ALLOCATION to 1
-    /*if (xTaskCreateStatic(vDemoTask3, "DemoTask3", mainGENERIC_STACK_SIZE * 2,
-                    NULL, mainGENERIC_PRIORITY - 2, xStack, &xTaskBuffer) != pdPASS) {
-        PRINT_TASK_ERROR("DemoTask3");
-        goto err_demotask3;
-    }*/
+    // xTaskCreateStatic(vDemoTask3, "DemoTask3", mainGENERIC_STACK_SIZE * 2,
+    //                NULL, mainGENERIC_PRIORITY - 2, xStack, &xTaskBuffer);
     
     if (xTaskCreate(vDemoTask3, "DemoTask3", mainGENERIC_STACK_SIZE * 2,
                     NULL, mainGENERIC_PRIORITY - 2, &DemoTask3) != pdPASS) {
