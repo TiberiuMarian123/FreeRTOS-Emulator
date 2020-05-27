@@ -24,10 +24,11 @@
 #define mainGENERIC_STACK_SIZE ((unsigned short)2560)
 
 #define STATE_QUEUE_LENGTH 1
-#define STATE_COUNT 2
+#define STATE_COUNT 3
 
 #define STATE_ONE 0
 #define STATE_TWO 1
+#define STATE_THREE 2
 
 #define NEXT_TASK 0
 #define PREV_TASK 1
@@ -37,10 +38,17 @@
 
 #define KEYCODE(CHAR) SDL_SCANCODE_##CHAR
 
+#define FPS_AVERAGE_COUNT 50
+#define FPS_FONT "IBMPlexSans-Bold.ttf"
+
 static QueueHandle_t StateQueue = NULL;
+
+static StackType_t xStack[mainGENERIC_STACK_SIZE * 2];
+static StaticTask_t xTaskBuffer;
 
 static TaskHandle_t DemoTask1 = NULL;
 static TaskHandle_t DemoTask2 = NULL;
+static TaskHandle_t DemoTask3 = NULL;
 static TaskHandle_t StateMachine = NULL;
 static TaskHandle_t BufferSwap = NULL;
 
@@ -111,22 +119,40 @@ initial_state:
         // Handle current state
         if (state_changed) {
             switch (current_state) {
-                case STATE_ONE:
+                case STATE_ONE:  // current_state = STARTING_STATE = 0
                     if (DemoTask2) {
                         vTaskSuspend(DemoTask2);
+                    }
+                    if (DemoTask3) {
+                        vTaskSuspend(DemoTask3);
                     }
                     if (DemoTask1) {
                         vTaskResume(DemoTask1);
                     }
                     break;
-                case STATE_TWO:
+                case STATE_TWO: // current_state = 1
                     if (DemoTask1) {
                         vTaskSuspend(DemoTask1);
+                    }
+                    if (DemoTask3) {
+                        vTaskSuspend(DemoTask3);
                     }
                     if (DemoTask2) {
                         vTaskResume(DemoTask2);
                     }
                     break;
+                case STATE_THREE:
+                    if (DemoTask1) {
+                        vTaskSuspend(DemoTask1);
+                    }
+                    if (DemoTask2) {
+                        vTaskSuspend(DemoTask2);
+                    }
+                    if (DemoTask3) {
+                        vTaskResume(DemoTask3);
+                    }
+                    break;   
+
                 default:
                     break;
             }
@@ -163,11 +189,28 @@ void xGetButtonInput(void)
     }
 }
 
+void vDrawHelpText(void)
+{
+    static char str[100] = { 0 };
+    static int text_width;
+    ssize_t prev_font_size = tumFontGetCurFontSize();
+
+    tumFontSetSize((ssize_t)20);
+
+    sprintf(str, "[Q]uit, [E]=New_State");
+
+    if (!tumGetTextSize((char *)str, &text_width, NULL))
+        tumDrawText(str, SCREEN_WIDTH - text_width - 10,
+                    DEFAULT_FONT_SIZE * 0.5, Black);
+                  
+    tumFontSetSize(prev_font_size);
+}
+
 static int vCheckStateInput(void)
 {
     if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
-        if (buttons.buttons[KEYCODE(C)]) {
-            buttons.buttons[KEYCODE(C)] = 0;
+        if (buttons.buttons[KEYCODE(E)]) {
+            buttons.buttons[KEYCODE(E)] = 0;
             if (StateQueue) {
                 xSemaphoreGive(buttons.lock);
                 xQueueSend(StateQueue, &next_state_signal, 0);
@@ -205,9 +248,10 @@ signed short Xcenter = SCREEN_WIDTH/5;
 signed short Ycenter = SCREEN_HEIGHT/2 - 10;
 signed short radius = 35;
 
-void vDrawCircle(signed short x_mouse, signed short y_mouse){
+void vDrawCircle(signed short x_mouse, signed short y_mouse,
+                    signed short Xcenter, signed short Ycenter, unsigned int color){
 
-    tumDrawCircle(Xcenter + x_mouse, Ycenter + y_mouse, radius, Red);
+    tumDrawCircle(Xcenter + x_mouse, Ycenter + y_mouse, radius, color);
 }
 
 signed short sqare_size = 70;
@@ -275,6 +319,60 @@ void PressingCounter(int *count_A, int *count_B, int *count_C, int *count_D){
         }  
     
 }*/
+
+void vDrawFPS(void)
+{
+    static unsigned int periods[FPS_AVERAGE_COUNT] = { 0 };
+    static unsigned int periods_total = 0;
+    static unsigned int index = 0;
+    static unsigned int average_count = 0;
+    static TickType_t xLastWakeTime = 0, prevWakeTime = 0;
+    static char str[10] = { 0 };
+    static int text_width;
+    int fps = 0;
+    font_handle_t cur_font = tumFontGetCurFontHandle();
+
+    xLastWakeTime = xTaskGetTickCount();
+
+    if (prevWakeTime != xLastWakeTime) {
+        periods[index] =
+            configTICK_RATE_HZ / (xLastWakeTime - prevWakeTime);
+        prevWakeTime = xLastWakeTime;
+    }
+    else {
+        periods[index] = 0;
+    }
+
+    periods_total += periods[index];
+
+    if (index == (FPS_AVERAGE_COUNT - 1)) {
+        index = 0;
+    }
+    else {
+        index++;
+    }
+
+    if (average_count < FPS_AVERAGE_COUNT) {
+        average_count++;
+    }
+    else {
+        periods_total -= periods[index];
+    }
+
+    fps = periods_total / average_count;
+
+    tumFontSelectFontFromName(FPS_FONT);
+
+    sprintf(str, "FPS: %2d", fps);
+
+    if (!tumGetTextSize((char *)str, &text_width, NULL))
+        tumDrawText(str, SCREEN_WIDTH - text_width - 10,
+                              SCREEN_HEIGHT - DEFAULT_FONT_SIZE * 1.5,
+                              Black);
+
+    tumFontSelectFontFromHandle(cur_font);
+    tumFontPutFontHandle(cur_font);
+}
 
 
 void vDemoTask1(void *pvParameters)
@@ -347,7 +445,7 @@ void vDemoTask1(void *pvParameters)
         clock_gettime(CLOCK_REALTIME, &the_time); // Get kernel real time
         
         vDrawTriangle(x_mouse/5, y_mouse/5); 
-        vDrawCircle(x_mouse/5, y_mouse/5);
+        vDrawCircle(x_mouse/5, y_mouse/5, Xcenter, Ycenter, Red);
         vDrawSquare(x_mouse/5, y_mouse/5);
         UpdatePositionFigure(x_mouse/5, y_mouse/5);
 
@@ -395,47 +493,90 @@ void vDemoTask1(void *pvParameters)
                         SCREEN_HEIGHT * 1/9 - DEFAULT_FONT_SIZE / 2 + y_mouse/5,
                         Red);  	
             }*/
-       
+
+
+        vDrawHelpText();
+        vDrawFPS();
+
         tumDrawUpdateScreen(); // Refresh the screen to draw string
 
         xSemaphoreGive(ScreenLock);
+
+        vCheckStateInput();
 
         vTaskDelay((TickType_t)20);
     }
 }
 
-void vDemoTask2(){
+
+void vDemoTask2(){ // BLUE CIRCLE LEFT, 1Hz Circle frequency, 1Hz Task
 tumDrawBindThread();
+int counter = 0;
 
     while (1) {
 
-        if (DrawSignal)
-            if (xSemaphoreTake(DrawSignal, portMAX_DELAY) ==
-                pdTRUE) {
+        tumEventFetchEvents(); // Query events backend for new events, ie. button presses
+        xGetButtonInput(); // Update global input
 
-                xGetButtonInput(); // Update global input
+        xSemaphoreTake(ScreenLock, portMAX_DELAY);
 
-                xSemaphoreTake(ScreenLock, portMAX_DELAY);
-
-                tumEventFetchEvents(); // Query events backend for new events, ie. button presses
-
-                if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
-                    if (buttons.buttons[KEYCODE(Q)]) { // If button Q is pressed
-                        exit(EXIT_SUCCESS); // File buffers are flushed, streams are closed, and temporary files are deleted.
-                    }
+        if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
+            if (buttons.buttons[KEYCODE(Q)])  // If button Q is pressed
+                    exit(EXIT_SUCCESS);  // File buffers are flushed, streams are closed, and temporary files are deleted.
                     xSemaphoreGive(buttons.lock);
-                }
+        }
 
-                tumDrawClear(White); // Clear screen
+        tumDrawClear(White); // Clear screen
 
-                tumDrawUpdateScreen(); // Refresh the screen to draw string
+        if(counter < 25) // Draws circle for the first 25 loops => 500 ms (vTaskDelay = 20ms) 
+            vDrawCircle(0,0,250,240, TUMBlue);
+        counter ++;
+        if(counter == 50) //if the circle drew for 500 ms, then nothing for another 500 ms => 50 loops in total
+            counter = 0;    // reset counter and begin drawing again
 
-                xSemaphoreGive(ScreenLock);
+        tumDrawUpdateScreen(); // Refresh the screen to draw string
 
-                vCheckStateInput();
+        xSemaphoreGive(ScreenLock);
 
-                vTaskDelay((TickType_t)20);
-            }
+        vCheckStateInput();
+
+        vTaskDelay((TickType_t)20); 
+    }
+
+}
+
+void vDemoTask3(){  // RED CIRCLE RIGHT , 2Hz circle frequency, 2Hz task
+tumDrawBindThread();
+int counter = 0;
+
+    while (1) {
+
+        tumEventFetchEvents(); // Query events backend for new events, ie. button presses
+        xGetButtonInput(); // Update global input
+
+        xSemaphoreTake(ScreenLock, portMAX_DELAY);
+
+        if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
+            if (buttons.buttons[KEYCODE(Q)])  // If button Q is pressed
+                    exit(EXIT_SUCCESS);  // File buffers are flushed, streams are closed, and temporary files are deleted.
+                    xSemaphoreGive(buttons.lock);
+        }
+
+        tumDrawClear(White); // Clear screen
+        
+        if(counter < 12.5) // Draws circle for the first 25 loops => 500 ms (vTaskDelay = 20ms) 
+            vDrawCircle(0,0,350,240, Red);
+        counter ++;
+        if(counter == 25) //if the circle drew for 500 ms, then nothing for another 500 ms => 50 loops in total
+            counter = 0;    // reset counter and begin drawing again
+
+        tumDrawUpdateScreen(); // Refresh the screen to draw string;
+
+        xSemaphoreGive(ScreenLock);
+
+        vCheckStateInput();
+
+        vTaskDelay((TickType_t)20);
     }
 
 }
@@ -494,14 +635,32 @@ int main(int argc, char *argv[])
         PRINT_TASK_ERROR("DemoTask1");
         goto err_demotask1;
     }
+
+    // Allocate Dynamically, priority -1
+    // Set configSUPPORT_DYNAMIC_ALLOCATION to 1
     if (xTaskCreate(vDemoTask2, "DemoTask2", mainGENERIC_STACK_SIZE * 2,
-                    NULL, mainGENERIC_PRIORITY, &DemoTask2) != pdPASS) {
+                    NULL, mainGENERIC_PRIORITY - 1, &DemoTask2) != pdPASS) {
         PRINT_TASK_ERROR("DemoTask2");
         goto err_demotask2;
     }
 
+    // Allocate Statically, priority -2              DOES NOT WORK PROPERLY (But it is very close !!!!!!!!)
+    // Set configSUPPORT_STATIC_ALLOCATION to 1
+    if (xTaskCreateStatic(vDemoTask3, "DemoTask3", mainGENERIC_STACK_SIZE * 2,
+                    NULL, mainGENERIC_PRIORITY - 2, xStack, &xTaskBuffer) != pdPASS) {
+        PRINT_TASK_ERROR("DemoTask3");
+        goto err_demotask3;
+    }
+    
+    /*if (xTaskCreate(vDemoTask3, "DemoTask3", mainGENERIC_STACK_SIZE * 2,
+                    NULL, mainGENERIC_PRIORITY - 1, &DemoTask3) != pdPASS) {
+        PRINT_TASK_ERROR("DemoTask3");
+        goto err_demotask3;
+    }*/
+
     vTaskSuspend(DemoTask1);
-    vTaskSuspend(DemoTask2);    
+    vTaskSuspend(DemoTask2); 
+    vTaskSuspend(DemoTask3);
 
     vTaskStartScheduler();
 
@@ -511,10 +670,12 @@ err_statemachine:
     vQueueDelete(StateQueue);
 err_state_queue:
     vSemaphoreDelete(StateQueue);
-err_demotask2:
-    vTaskDelete(DemoTask1);
 err_demotask1:
     vTaskDelete(BufferSwap);
+err_demotask2:
+    vTaskDelete(DemoTask1);
+err_demotask3:
+    vTaskDelete(DemoTask2);
 err_screen_lock:
     vSemaphoreDelete(DrawSignal);
 err_buttons_lock:
@@ -543,4 +704,64 @@ __attribute__((unused)) void vApplicationIdleHook(void)
     xTimeToSleep.tv_nsec = 0;
     nanosleep(&xTimeToSleep, &xTimeSlept);
 #endif
+}
+
+// Missing data for Static Allocation because vTaskCreateStatic won't work
+
+#define configMINIMAL_STACK_SIZE                128
+#define configTIMER_TASK_STACK_DEPTH            configMINIMAL_STACK_SIZE
+/* A header file that defines trace macro can be included here. */
+
+
+/* configSUPPORT_STATIC_ALLOCATION is set to 1, so the application must provide an
+implementation of vApplicationGetIdleTaskMemory() to provide the memory that is
+used by the Idle task. */
+void vApplicationGetIdleTaskMemory( StaticTask_t **ppxIdleTaskTCBBuffer,
+                                    StackType_t **ppxIdleTaskStackBuffer,
+                                    uint32_t *pulIdleTaskStackSize )
+{
+/* If the buffers to be provided to the Idle task are declared inside this
+function then they must be declared static – otherwise they will be allocated on
+the stack and so not exists after this function exits. */
+static StaticTask_t xIdleTaskTCB;
+static StackType_t uxIdleTaskStack[ configMINIMAL_STACK_SIZE ];
+
+    /* Pass out a pointer to the StaticTask_t structure in which the Idle task’s
+    state will be stored. */
+    *ppxIdleTaskTCBBuffer = &xIdleTaskTCB;
+
+    /* Pass out the array that will be used as the Idle task’s stack. */
+    *ppxIdleTaskStackBuffer = uxIdleTaskStack;
+
+    /* Pass out the size of the array pointed to by *ppxIdleTaskStackBuffer.
+    Note that, as the array is necessarily of type StackType_t,
+    configMINIMAL_STACK_SIZE is specified in words, not bytes. */
+    *pulIdleTaskStackSize = configMINIMAL_STACK_SIZE;
+}
+/*———————————————————–*/
+
+/* configSUPPORT_STATIC_ALLOCATION and configUSE_TIMERS are both set to 1, so the
+application must provide an implementation of vApplicationGetTimerTaskMemory()
+to provide the memory that is used by the Timer service task. */
+void vApplicationGetTimerTaskMemory( StaticTask_t **ppxTimerTaskTCBBuffer,
+                                     StackType_t **ppxTimerTaskStackBuffer,
+                                     uint32_t *pulTimerTaskStackSize )
+{
+/* If the buffers to be provided to the Timer task are declared inside this
+function then they must be declared static – otherwise they will be allocated on
+the stack and so not exists after this function exits. */
+static StaticTask_t xTimerTaskTCB;
+static StackType_t uxTimerTaskStack[ configTIMER_TASK_STACK_DEPTH ];
+
+    /* Pass out a pointer to the StaticTask_t structure in which the Timer
+    task’s state will be stored. */
+    *ppxTimerTaskTCBBuffer = &xTimerTaskTCB;
+
+    /* Pass out the array that will be used as the Timer task’s stack. */
+    *ppxTimerTaskStackBuffer = uxTimerTaskStack;
+
+    /* Pass out the size of the array pointed to by *ppxTimerTaskStackBuffer.
+    Note that, as the array is necessarily of type StackType_t,
+    configTIMER_TASK_STACK_DEPTH is specified in words, not bytes. */
+    *pulTimerTaskStackSize = configTIMER_TASK_STACK_DEPTH;
 }
